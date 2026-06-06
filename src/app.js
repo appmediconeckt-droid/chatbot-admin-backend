@@ -27,14 +27,23 @@ app.use(compression());
 const allowedOrigins = [
   process.env.FRONTEND_URL,
   "http://localhost:5173",
-  "http://localhost:5174"
+  "http://localhost:5174",
+  "http://localhost:5175",
 ].filter(Boolean);
+
+// In development we accept any http://localhost:PORT origin because Vite
+// auto-bumps the port when 5173 is in use. In production only FRONTEND_URL
+// and the explicit allowlist above are honoured.
+const isLocalhostDevOrigin = (origin) =>
+  process.env.NODE_ENV !== "production" &&
+  /^http:\/\/localhost:\d+$/.test(origin || "");
 
 app.use(cors({
   origin: (origin, callback) => {
     // allow requests with no origin (like mobile apps, curl, postman)
     if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin)) return callback(null, true);
+    if (isLocalhostDevOrigin(origin)) return callback(null, true);
     return callback(new Error('CORS policy: Origin not allowed'));
   },
   credentials: true

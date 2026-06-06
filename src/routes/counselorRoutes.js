@@ -7,7 +7,9 @@ import {
   approveCounselors,
   rejectCounselors,
   getCounselorStats,
-  getCounselorsWithoutSpecialization
+  getCounselorsWithoutSpecialization,
+  updateChatPermission,
+  getChatPermission,
 } from "../controllers/counselorController.js";
 import { verifyAdminToken } from "../middleware/simpleAdminAuth.js";
 
@@ -21,5 +23,7 @@ router.post("/reject", verifyAdminToken, rejectCounselors);
 router.get("/:id", verifyAdminToken, getCounselorById);
 router.put("/:id", verifyAdminToken, updateCounselor);
 router.delete("/:id", verifyAdminToken, deleteCounselor);
+router.get("/:id/chat-permission", verifyAdminToken, getChatPermission);
+router.put("/:id/chat-permission", verifyAdminToken, updateChatPermission);
 
 export default router;

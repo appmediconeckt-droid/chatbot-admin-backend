@@ -62,6 +62,15 @@ const userSchema = new mongoose.Schema(
     sessionsDone: { type: Number, default: 0 },
     bio: { type: String },
     availability: { type: String },
+
+    // Chat permission — controls whether counselor can chat with users
+    chatPermission: {
+      enabled: { type: Boolean, default: true },
+      disabledReason: { type: String, default: null },
+      disabledBy: { type: String, enum: ["admin", "system"], default: null },
+      disabledAt: { type: Date, default: null },
+      notes: { type: String, default: "" },
+    },
   },
   { timestamps: true }
 );
