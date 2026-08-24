@@ -1,21 +1,19 @@
-import Transaction from "../models/Transaction.js";
-import User from "../models/User.js";
+import mongoose from "mongoose";
+import CounselorEarning from "../models/CounselorEarning.js";
 
 // Get revenue per counselor
 export const getCounselorRevenue = async (req, res) => {
   try {
-    const data = await Transaction.aggregate([
-      // Only count completed transactions
-      { $match: { status: "COMPLETED" } },
-      // Group by counselor
+    const data = await CounselorEarning.aggregate([
+      { $match: { $or: [{ earningStatus: "completed" }, { earningStatus: { $exists: false } }] } },
       {
         $group: {
           _id: "$counselorId",
           totalSessions: { $sum: 1 },
-          totalRevenue: { $sum: "$amount" },
-          platformFee: { $sum: "$platformFee" },
-          counselorEarnings: { $sum: "$counselorEarnings" },
-          avgTransactionAmount: { $avg: "$amount" }
+          totalRevenue: { $sum: { $ifNull: ["$totalAmount", 0] } },
+          platformFee: { $sum: { $ifNull: ["$commission", 0] } },
+          counselorEarnings: { $sum: { $ifNull: ["$earningAmount", 0] } },
+          avgTransactionAmount: { $avg: { $ifNull: ["$totalAmount", 0] } }
         }
       },
       // Join with counselor details
@@ -84,16 +82,16 @@ export const getCounselorRevenue = async (req, res) => {
 // Get revenue by session type
 export const getRevenueBySessionType = async (req, res) => {
   try {
-    const data = await Transaction.aggregate([
-      { $match: { status: "COMPLETED" } },
+    const data = await CounselorEarning.aggregate([
+      { $match: { $or: [{ earningStatus: "completed" }, { earningStatus: { $exists: false } }] } },
       {
         $group: {
-          _id: "$type",
+          _id: "$sessionType",
           count: { $sum: 1 },
-          totalRevenue: { $sum: "$amount" },
-          platformFee: { $sum: "$platformFee" },
-          counselorEarnings: { $sum: "$counselorEarnings" },
-          avgAmount: { $avg: "$amount" }
+          totalRevenue: { $sum: { $ifNull: ["$totalAmount", 0] } },
+          platformFee: { $sum: { $ifNull: ["$commission", 0] } },
+          counselorEarnings: { $sum: { $ifNull: ["$earningAmount", 0] } },
+          avgAmount: { $avg: { $ifNull: ["$totalAmount", 0] } }
         }
       },
       {
@@ -128,14 +126,14 @@ export const getTopCounselors = async (req, res) => {
   try {
     const { limit = 5 } = req.query;
 
-    const data = await Transaction.aggregate([
-      { $match: { status: "COMPLETED" } },
+    const data = await CounselorEarning.aggregate([
+      { $match: { $or: [{ earningStatus: "completed" }, { earningStatus: { $exists: false } }] } },
       {
         $group: {
           _id: "$counselorId",
           totalSessions: { $sum: 1 },
-          totalRevenue: { $sum: "$amount" },
-          counselorEarnings: { $sum: "$counselorEarnings" }
+          totalRevenue: { $sum: { $ifNull: ["$totalAmount", 0] } },
+          counselorEarnings: { $sum: { $ifNull: ["$earningAmount", 0] } }
         }
       },
       {
@@ -178,16 +176,20 @@ export const getCounselorDetails = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const data = await Transaction.aggregate([
-      { $match: { status: "COMPLETED", counselorId: new (require("mongoose")).Types.ObjectId(id) } },
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ success: false, error: "Invalid counselor id" });
+    }
+
+    const data = await CounselorEarning.aggregate([
+      { $match: { counselorId: new mongoose.Types.ObjectId(id), $or: [{ earningStatus: "completed" }, { earningStatus: { $exists: false } }] } },
       {
         $group: {
           _id: "$counselorId",
           totalSessions: { $sum: 1 },
-          totalRevenue: { $sum: "$amount" },
-          platformFee: { $sum: "$platformFee" },
-          counselorEarnings: { $sum: "$counselorEarnings" },
-          avgAmount: { $avg: "$amount" }
+          totalRevenue: { $sum: { $ifNull: ["$totalAmount", 0] } },
+          platformFee: { $sum: { $ifNull: ["$commission", 0] } },
+          counselorEarnings: { $sum: { $ifNull: ["$earningAmount", 0] } },
+          avgAmount: { $avg: { $ifNull: ["$totalAmount", 0] } }
         }
       },
       {

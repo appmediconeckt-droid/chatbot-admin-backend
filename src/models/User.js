@@ -42,6 +42,7 @@ const userSchema = new mongoose.Schema(
     fullName: { type: String, required: true },
     email: { type: String, required: true, unique: true, index: true },
     phone: { type: String },
+    phoneNumber: { type: String },
     gender: { type: String, enum: ["male", "female", "other"] },
     location: { type: String },
     profilePicture: { type: String },
@@ -62,6 +63,9 @@ const userSchema = new mongoose.Schema(
     sessionsDone: { type: Number, default: 0 },
     bio: { type: String },
     availability: { type: String },
+    walletBalance: { type: Number, default: 0 },
+    walletCreditPaymentIds: { type: [String], default: [], select: false },
+    walletAdjustmentIds: { type: [String], default: [], select: false },
 
     // Chat permission — controls whether counselor can chat with users
     chatPermission: {

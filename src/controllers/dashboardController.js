@@ -2,6 +2,8 @@ import User from "../models/User.js";
 import AuditLog from "../models/AuditLog.js";
 import Transaction from "../models/Transaction.js";
 import Payout from "../models/Payout.js";
+import CounselorEarning from "../models/CounselorEarning.js";
+import SupportTicket from "../models/SupportTicket.js";
 
 export const getDashboardAnalytics = async (req, res) => {
   try {
@@ -107,53 +109,41 @@ export const getRecentActivities = async (req, res) => {
 
 export const getRevenueData = async (req, res) => {
   try {
-    // Total revenue
-    const totalRevenue = await Transaction.aggregate([
-      { $match: { status: "COMPLETED" } },
-      { $group: { _id: null, total: { $sum: "$amount" } } }
-    ]);
-
-    // Platform earnings (commission)
-    const platformEarnings = await Transaction.aggregate([
-      { $match: { status: "COMPLETED" } },
-      { $group: { _id: null, total: { $sum: "$platformFee" } } }
-    ]);
-
-    // Counselor earnings
-    const counselorEarnings = await Transaction.aggregate([
-      { $match: { status: "COMPLETED" } },
-      { $group: { _id: null, total: { $sum: "$counselorEarnings" } } }
-    ]);
-
-    // This month revenue
     const startOfMonth = new Date();
     startOfMonth.setDate(1);
     startOfMonth.setHours(0, 0, 0, 0);
 
-    const thisMonthRevenue = await Transaction.aggregate([
-      {
-        $match: {
-          status: "COMPLETED",
-          createdAt: { $gte: startOfMonth }
-        }
-      },
-      { $group: { _id: null, total: { $sum: "$amount" } } }
+    const [earningsTotals, thisMonthRevenue] = await Promise.all([
+      CounselorEarning.aggregate([
+        { $match: { $or: [{ earningStatus: "completed" }, { earningStatus: { $exists: false } }] } },
+        { $group: {
+        _id: null,
+        totalRevenue: { $sum: { $ifNull: ["$totalAmount", 0] } },
+        platformEarnings: { $sum: { $ifNull: ["$commission", 0] } },
+        counselorEarnings: { $sum: { $ifNull: ["$earningAmount", 0] } }
+      } }]),
+      CounselorEarning.aggregate([
+        { $match: { createdAt: { $gte: startOfMonth }, $or: [{ earningStatus: "completed" }, { earningStatus: { $exists: false } }] } },
+        { $group: { _id: null, total: { $sum: { $ifNull: ["$totalAmount", 0] } } } }
+      ])
     ]);
 
-    // Transaction count
-    const totalTransactions = await Transaction.countDocuments({ status: "COMPLETED" });
-    const failedTransactions = await Transaction.countDocuments({ status: "FAILED" });
+    const completedStatus = { $regex: /^completed$/i };
+    const failedStatus = { $regex: /^failed$/i };
+    const refundedStatus = { $regex: /^refunded$/i };
+    const totalTransactions = await Transaction.countDocuments({ status: completedStatus });
+    const failedTransactions = await Transaction.countDocuments({ status: failedStatus });
     const refundedAmount = await Transaction.aggregate([
-      { $match: { status: "REFUNDED" } },
+      { $match: { status: refundedStatus } },
       { $group: { _id: null, total: { $sum: "$amount" } } }
     ]);
 
     res.json({
       success: true,
       data: {
-        totalRevenue: totalRevenue[0]?.total || 0,
-        platformEarnings: platformEarnings[0]?.total || 0,
-        counselorEarnings: counselorEarnings[0]?.total || 0,
+        totalRevenue: earningsTotals[0]?.totalRevenue || 0,
+        platformEarnings: earningsTotals[0]?.platformEarnings || 0,
+        counselorEarnings: earningsTotals[0]?.counselorEarnings || 0,
         thisMonthRevenue: thisMonthRevenue[0]?.total || 0,
         totalTransactions,
         failedTransactions,
@@ -178,14 +168,14 @@ export const getRevenueTimeSeries = async (req, res) => {
       const nextDate = new Date(date);
       nextDate.setDate(nextDate.getDate() + 1);
 
-      const revenue = await Transaction.aggregate([
+      const revenue = await CounselorEarning.aggregate([
         {
           $match: {
-            status: "COMPLETED",
-            createdAt: { $gte: date, $lt: nextDate }
+            createdAt: { $gte: date, $lt: nextDate },
+            $or: [{ earningStatus: "completed" }, { earningStatus: { $exists: false } }]
           }
         },
-        { $group: { _id: null, total: { $sum: "$amount" } } }
+        { $group: { _id: null, total: { $sum: { $ifNull: ["$totalAmount", 0] } } } }
       ]);
 
       data.push({
@@ -273,6 +263,28 @@ export const getNotifications = async (req, res) => {
     ]);
 
     const groups = [];
+
+    const [unreadSupportTickets, unreadSupportCount] = await Promise.all([
+      SupportTicket.find({ unreadByAdmin: true }).sort({ lastMessageAt: -1 }).limit(5).select("ticketNumber requesterName requesterEmail subject lastMessageAt"),
+      SupportTicket.countDocuments({ unreadByAdmin: true })
+    ]);
+
+    if (unreadSupportCount > 0) {
+      groups.push({
+        key: "support_unread",
+        title: "New support messages",
+        icon: "support_agent",
+        severity: "warning",
+        link: "/support",
+        count: unreadSupportCount,
+        items: unreadSupportTickets.map(ticket => ({
+          id: ticket._id,
+          label: ticket.requesterName || ticket.requesterEmail,
+          meta: ticket.subject,
+          at: ticket.lastMessageAt
+        }))
+      });
+    }
 
     if (pendingCounselorCount > 0) {
       groups.push({

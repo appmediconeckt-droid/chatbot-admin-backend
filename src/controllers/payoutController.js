@@ -1,6 +1,76 @@
 import Payout from "../models/Payout.js";
 import Transaction from "../models/Transaction.js";
 import User from "../models/User.js";
+import Notification from "../models/Notification.js";
+
+const transactionStatusToPayoutStatus = (status, metadata = {}) => {
+  const payoutStatus = String(metadata.payoutStatus || "").toLowerCase();
+  if (payoutStatus === "paid") return "COMPLETED";
+  if (payoutStatus === "approved" || payoutStatus === "processing") return "APPROVED";
+  if (payoutStatus === "rejected") return "CANCELLED";
+  return ({ pending: "PENDING", hold: "APPROVED", completed: "COMPLETED", failed: "FAILED", refunded: "CANCELLED" })[String(status || "pending").toLowerCase()] || String(status).toUpperCase();
+};
+
+const payoutStatusToTransactionStatus = (status) =>
+  ({ APPROVED: "hold", COMPLETED: "completed", CANCELLED: "failed" })[status] || status.toLowerCase();
+
+const withdrawalFilter = { type: "debit", description: /withdrawal/i };
+
+const normalizeWithdrawal = (transaction) => ({
+  _id: `withdrawal-${transaction._id}`,
+  payoutId: `WITHDRAWAL-${transaction._id}`,
+  counselorId: transaction.userId?._id || transaction.userId,
+  counselorName: transaction.userId?.fullName || "Unknown counselor",
+  counselorEmail: transaction.userId?.email || "",
+  amount: Number(transaction.amount || 0),
+  taxAmount: Number(transaction.metadata?.feeAmount || 0),
+  netAmount: Number(transaction.metadata?.netAmount ?? transaction.amount ?? 0),
+  currency: transaction.currency || "INR",
+  status: transactionStatusToPayoutStatus(transaction.status, transaction.metadata),
+  paymentMethod: "BANK_TRANSFER",
+  payoutType: transaction.metadata?.payoutType || "standard",
+  transactionReference: transaction.metadata?.transactionReference || "",
+  approvedAt: transaction.metadata?.approvedAt || null,
+  processedAt: transaction.metadata?.processedAt || null,
+  completedAt: transaction.metadata?.paidAt || null,
+  failureReason: transaction.metadata?.failureReason || "",
+  source: "WITHDRAWAL_TRANSACTION",
+  createdAt: transaction.createdAt,
+  updatedAt: transaction.updatedAt
+});
+
+const updateWithdrawal = async (syntheticId, status, extra = {}) => {
+  if (!String(syntheticId).startsWith("withdrawal-")) return null;
+  const id = String(syntheticId).slice(11);
+  const transaction = await Transaction.findByIdAndUpdate(
+    id,
+    { status: payoutStatusToTransactionStatus(status), ...extra },
+    { new: true }
+  ).populate("userId", "fullName email");
+  return transaction ? normalizeWithdrawal(transaction) : null;
+};
+
+const createCounselorNotification = async ({ recipientId, title, message, transaction, status }) => {
+  if (!recipientId) return;
+  try {
+    await Notification.create({
+      recipientId,
+      type: "payment",
+      title,
+      message,
+      data: {
+        withdrawalId: transaction._id,
+        amount: transaction.amount,
+        netAmount: transaction.metadata?.netAmount ?? transaction.amount,
+        payoutStatus: status,
+        transactionReference: transaction.metadata?.transactionReference || ""
+      },
+      actionUrl: "/counselor/earnings"
+    });
+  } catch (error) {
+    console.error("Payout notification failed:", error.message);
+  }
+};
 
 // Helper: Generate unique payout ID
 const generatePayoutId = () => {
@@ -18,15 +88,27 @@ export const getAllPayouts = async (req, res) => {
 
     const skip = (page - 1) * limit;
 
-    const [payouts, total] = await Promise.all([
+    const transactionFilter = {
+      ...withdrawalFilter,
+      ...(status ? { status: payoutStatusToTransactionStatus(status) } : {})
+    };
+
+    const [savedPayouts, withdrawals] = await Promise.all([
       Payout.find(filter)
         .sort({ [sortBy]: -1 })
-        .skip(skip)
-        .limit(parseInt(limit))
         .populate("approvedBy", "email")
         .populate("processedBy", "email"),
-      Payout.countDocuments(filter)
+      Transaction.find(transactionFilter)
+        .sort({ [sortBy]: -1 })
+        .populate("userId", "fullName email")
     ]);
+
+    const combined = [
+      ...savedPayouts.map(p => p.toObject()),
+      ...withdrawals.map(normalizeWithdrawal)
+    ].sort((a, b) => new Date(b[sortBy] || b.createdAt) - new Date(a[sortBy] || a.createdAt));
+    const total = combined.length;
+    const payouts = combined.slice(skip, skip + parseInt(limit));
 
     res.json({
       success: true,
@@ -85,19 +167,34 @@ export const getPayoutStats = async (req, res) => {
           totalPayouts: { $sum: 1 },
           totalAmount: { $sum: "$amount" },
           totalTax: { $sum: "$taxAmount" },
-          totalNet: { $sum: "$netAmount" }
+          totalNet: { $sum: { $cond: [{ $eq: ["$status", "COMPLETED"] }, "$netAmount", 0] } }
         }
       }
     ]);
 
+    const withdrawalStats = await Transaction.aggregate([
+      { $match: withdrawalFilter },
+      { $group: { _id: "$status", count: { $sum: 1 }, totalAmount: { $sum: { $ifNull: ["$amount", 0] } }, totalNet: { $sum: { $cond: [{ $eq: ["$status", "completed"] }, { $ifNull: ["$metadata.netAmount", "$amount"] }, 0] } }, totalTax: { $sum: { $ifNull: ["$metadata.feeAmount", 0] } } } }
+    ]);
+    const withdrawalOverall = withdrawalStats.reduce((acc, row) => ({
+      totalPayouts: acc.totalPayouts + row.count,
+      totalAmount: acc.totalAmount + row.totalAmount,
+      totalNet: acc.totalNet + row.totalNet,
+      totalTax: acc.totalTax + row.totalTax
+    }), { totalPayouts: 0, totalAmount: 0, totalTax: 0, totalNet: 0 });
+    const savedOverall = total[0] || { totalPayouts: 0, totalAmount: 0, totalTax: 0, totalNet: 0 };
+
     res.json({
       success: true,
-      byStatus: stats,
-      overall: total[0] || {
-        totalPayouts: 0,
-        totalAmount: 0,
-        totalTax: 0,
-        totalNet: 0
+      byStatus: [
+        ...stats,
+        ...withdrawalStats.map(s => ({ _id: transactionStatusToPayoutStatus(s._id), count: s.count, totalAmount: s.totalAmount }))
+      ],
+      overall: {
+        totalPayouts: savedOverall.totalPayouts + withdrawalOverall.totalPayouts,
+        totalAmount: savedOverall.totalAmount + withdrawalOverall.totalAmount,
+        totalTax: savedOverall.totalTax + withdrawalOverall.totalTax,
+        totalNet: savedOverall.totalNet + withdrawalOverall.totalNet
       }
     });
   } catch (err) {
@@ -203,6 +300,34 @@ export const approvePayout = async (req, res) => {
     const { notes } = req.body;
     const adminId = req.adminId; // From token
 
+    if (String(req.params.id).startsWith("withdrawal-")) {
+      const id = String(req.params.id).slice(11);
+      const approvedAt = new Date();
+      const transaction = await Transaction.findOneAndUpdate(
+        { _id: id, ...withdrawalFilter, status: "pending" },
+        {
+          $set: {
+            status: "hold",
+            "metadata.payoutStatus": "approved",
+            "metadata.approvalStatus": "approved",
+            "metadata.approvedAt": approvedAt,
+            "metadata.approvedBy": adminId,
+            "metadata.approvalNotes": notes || ""
+          }
+        },
+        { new: true }
+      ).populate("userId", "fullName email");
+      if (!transaction) return res.status(409).json({ success: false, error: "Only pending withdrawals can be approved" });
+      await createCounselorNotification({
+        recipientId: transaction.userId?._id || transaction.userId,
+        title: "Withdrawal approved",
+        message: `Your withdrawal of ₹${Number(transaction.metadata?.netAmount ?? transaction.amount).toFixed(2)} was approved and is awaiting bank transfer.`,
+        transaction,
+        status: "approved"
+      });
+      return res.json({ success: true, message: "Payout approved; bank transfer is still pending", data: normalizeWithdrawal(transaction) });
+    }
+
     const payout = await Payout.findByIdAndUpdate(
       req.params.id,
       {
@@ -234,6 +359,38 @@ export const processPayout = async (req, res) => {
   try {
     const { transactionReference } = req.body;
     const adminId = req.adminId;
+
+    if (!String(transactionReference || "").trim()) {
+      return res.status(400).json({ success: false, error: "Bank transaction reference/UTR is required" });
+    }
+
+    if (String(req.params.id).startsWith("withdrawal-")) {
+      const id = String(req.params.id).slice(11);
+      const paidAt = new Date();
+      const transaction = await Transaction.findOneAndUpdate(
+        { _id: id, ...withdrawalFilter, status: "hold" },
+        {
+          $set: {
+            status: "completed",
+            "metadata.payoutStatus": "paid",
+            "metadata.transactionReference": String(transactionReference).trim(),
+            "metadata.processedAt": paidAt,
+            "metadata.paidAt": paidAt,
+            "metadata.processedBy": adminId
+          }
+        },
+        { new: true }
+      ).populate("userId", "fullName email");
+      if (!transaction) return res.status(409).json({ success: false, error: "Only approved withdrawals can be marked paid" });
+      await createCounselorNotification({
+        recipientId: transaction.userId?._id || transaction.userId,
+        title: "Withdrawal paid",
+        message: `₹${Number(transaction.metadata?.netAmount ?? transaction.amount).toFixed(2)} was sent to your bank account. UTR: ${transaction.metadata.transactionReference}`,
+        transaction,
+        status: "paid"
+      });
+      return res.json({ success: true, message: "Bank transfer confirmed and payout marked paid", data: normalizeWithdrawal(transaction) });
+    }
 
     const payout = await Payout.findById(req.params.id);
     if (!payout) {
@@ -272,6 +429,37 @@ export const processPayout = async (req, res) => {
 export const rejectPayout = async (req, res) => {
   try {
     const { failureReason } = req.body;
+
+    if (String(req.params.id).startsWith("withdrawal-")) {
+      if (!String(failureReason || "").trim()) {
+        return res.status(400).json({ success: false, error: "Rejection reason is required" });
+      }
+      const id = String(req.params.id).slice(11);
+      const rejectedAt = new Date();
+      const transaction = await Transaction.findOneAndUpdate(
+        { _id: id, ...withdrawalFilter, status: { $in: ["pending", "hold"] } },
+        {
+          $set: {
+            status: "failed",
+            "metadata.payoutStatus": "rejected",
+            "metadata.failureReason": String(failureReason).trim(),
+            "metadata.rejectedAt": rejectedAt,
+            "metadata.refundedAt": rejectedAt
+          }
+        },
+        { new: true }
+      ).populate("userId", "fullName email");
+      if (!transaction) return res.status(409).json({ success: false, error: "Only pending or approved withdrawals can be rejected" });
+      await User.findByIdAndUpdate(transaction.userId?._id || transaction.userId, { $inc: { walletBalance: transaction.amount } });
+      await createCounselorNotification({
+        recipientId: transaction.userId?._id || transaction.userId,
+        title: "Withdrawal rejected",
+        message: `Your withdrawal was rejected and ₹${Number(transaction.amount).toFixed(2)} was returned to your wallet. Reason: ${transaction.metadata.failureReason}`,
+        transaction,
+        status: "rejected"
+      });
+      return res.json({ success: true, message: "Payout rejected and amount returned to counselor wallet", data: normalizeWithdrawal(transaction) });
+    }
 
     const payout = await Payout.findByIdAndUpdate(
       req.params.id,

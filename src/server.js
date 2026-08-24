@@ -1,11 +1,15 @@
 import dotenv from "dotenv";
-dotenv.config();
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.join(__dirname, ".env") });
 
 import mongoose from "mongoose";
 import app from "./app.js";
 import User from "./models/User.js";
 
-const PORT = process.env.PORT || 5001;
+const PORT = process.env.PORT || 5002;
 import dns from "node:dns";
 dns.setServers(["8.8.8.8", "1.1.1.1"]);
 mongoose

@@ -4,8 +4,8 @@ const auditLogSchema = new mongoose.Schema(
   {
     adminId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     adminEmail: { type: String },
-    action: { type: String, enum: ["CREATE", "UPDATE", "DELETE", "ACTIVATE", "DEACTIVATE", "VERIFY", "LOGIN"], required: true },
-    entityType: { type: String, enum: ["USER", "COUNSELOR", "SETTINGS", "CONTENT"], required: true },
+    action: { type: String, enum: ["CREATE", "UPDATE", "DELETE", "ACTIVATE", "DEACTIVATE", "VERIFY", "LOGIN", "REFUND"], required: true },
+    entityType: { type: String, enum: ["USER", "COUNSELOR", "SETTINGS", "CONTENT", "TRANSACTION", "SUPPORT"], required: true },
     entityId: { type: mongoose.Schema.Types.ObjectId },
     entityName: { type: String },
     changes: { type: Object }, // Store what was changed
