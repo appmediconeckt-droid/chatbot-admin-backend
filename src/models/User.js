@@ -49,6 +49,8 @@ const userSchema = new mongoose.Schema(
     isVerified: { type: Boolean, default: false, index: true },
     isActive: { type: Boolean, default: true, index: true },
     role: { type: String, enum: ["user", "counsellor"], default: "user", index: true },
+    fcmToken: { type: String, select: false },
+    lastActiveAt: { type: Date },
 
     locationConsent: { type: Boolean, default: false },
     locationData: { type: locationDataSchema, default: () => ({}) },

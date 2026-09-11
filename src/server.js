@@ -1,9 +1,14 @@
 import dotenv from "dotenv";
-dotenv.config();
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.join(__dirname, "../.env") });
 
 import mongoose from "mongoose";
 import app from "./app.js";
 import User from "./models/User.js";
+import { startNotificationRuleScheduler } from "./jobs/notificationRuleScheduler.js";
 
 const PORT = process.env.PORT || 5001;
 import dns from "node:dns";
@@ -14,6 +19,7 @@ mongoose
     console.log("\n✅ MongoDB Connected Successfully!");
 
     app.listen(PORT, '0.0.0.0', () => {
+      startNotificationRuleScheduler();
       console.log(`
 ╔════════════════════════════════════════════════════╗
 ║   🎯 ADMIN PANEL BACKEND - RUNNING                ║

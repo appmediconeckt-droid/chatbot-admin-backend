@@ -11,6 +11,7 @@ import revenueRoutes from "./routes/revenueRoutes.js";
 import payoutRoutes from "./routes/payoutRoutes.js";
 import locationRoutes from "./routes/locationRoutes.js";
 import settingsRoutes from "./routes/settingsRoutes.js";
+import notificationRoutes from "./routes/notificationRoutes.js";
 
 const app = express();
 
@@ -64,6 +65,7 @@ app.use("/api/admin/revenue", revenueRoutes);
 app.use("/api/admin/payouts", payoutRoutes);
 app.use("/api/admin/location", locationRoutes);
 app.use("/api/admin/settings", settingsRoutes);
+app.use("/api/admin/notifications", notificationRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ success: false, message: "Endpoint not found" });
