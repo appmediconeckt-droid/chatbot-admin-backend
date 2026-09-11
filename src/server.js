@@ -10,7 +10,7 @@ import app from "./app.js";
 import User from "./models/User.js";
 import { startNotificationRuleScheduler } from "./jobs/notificationRuleScheduler.js";
 
-const PORT = process.env.PORT || 5001;
+const PORT = process.env.PORT || 5002;
 import dns from "node:dns";
 dns.setServers(["8.8.8.8", "1.1.1.1"]);
 mongoose
