@@ -10,6 +10,28 @@ Never send FCM tokens to this API. Firebase delivery stays in the Main Backend.
 
 ## Manual Promotion
 
+### Railway configuration
+
+Set these variables on the **Admin Backend** service before redeploying:
+
+```dotenv
+# One reverse proxy between the client and the app; adjust for your topology.
+TRUST_PROXY_HOPS=1
+MAIN_BACKEND_URL=https://your-main-backend.example.com
+MAIN_BACKEND_INTERNAL_API_TOKEN=<token-accepted-by-main-backend>
+```
+
+Use the Main Backend base URL without a trailing slash or `/api` suffix.
+The client appends `/api/notification/promotion` and sends the internal token
+as `Authorization: Bearer <token>`. The Main Backend must implement this route
+and accept that token; this is separate from the admin login JWT.
+Keep the internal token in server environment variables only.
+
+Missing either Main Backend variable currently returns HTTP 502 from the
+Admin Backend before any upstream request is sent. This is independent of
+the Express proxy validation error. The frontend send route is the plural
+`/api/admin/notifications/promotion`, not `/api/admin/notification/permission`.
+
 `POST /api/admin/notifications/promotion`
 
 Backward-compatible body:
