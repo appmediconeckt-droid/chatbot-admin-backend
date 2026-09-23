@@ -2,6 +2,44 @@ import Payout from "../models/Payout.js";
 import Transaction from "../models/Transaction.js";
 import User from "../models/User.js";
 
+const transactionStatusToPayoutStatus = (status) =>
+  ({ pending: "PENDING", hold: "APPROVED", completed: "COMPLETED", failed: "FAILED", refunded: "CANCELLED" })[String(status || "pending").toLowerCase()] || String(status).toUpperCase();
+
+const payoutStatusToTransactionStatus = (status) =>
+  ({ APPROVED: "hold", COMPLETED: "completed", CANCELLED: "failed" })[status] || status.toLowerCase();
+
+const withdrawalFilter = { type: "debit", description: /withdrawal/i };
+
+const normalizeWithdrawal = (transaction) => ({
+  _id: `withdrawal-${transaction._id}`,
+  payoutId: `WITHDRAWAL-${transaction._id}`,
+  counselorId: transaction.userId?._id || transaction.userId,
+  counselorName: transaction.userId?.fullName || "Unknown counselor",
+  counselorEmail: transaction.userId?.email || "",
+  amount: Number(transaction.amount || 0),
+  taxAmount: Number(transaction.metadata?.feeAmount || 0),
+  netAmount: Number(transaction.metadata?.netAmount ?? transaction.amount ?? 0),
+  currency: transaction.currency || "INR",
+  status: transactionStatusToPayoutStatus(transaction.status),
+  paymentMethod: "BANK_TRANSFER",
+  payoutType: transaction.metadata?.payoutType || "standard",
+  transactionReference: transaction.metadata?.transactionReference || "",
+  source: "WITHDRAWAL_TRANSACTION",
+  createdAt: transaction.createdAt,
+  updatedAt: transaction.updatedAt
+});
+
+const updateWithdrawal = async (syntheticId, status, extra = {}) => {
+  if (!String(syntheticId).startsWith("withdrawal-")) return null;
+  const id = String(syntheticId).slice(11);
+  const transaction = await Transaction.findByIdAndUpdate(
+    id,
+    { status: payoutStatusToTransactionStatus(status), ...extra },
+    { new: true }
+  ).populate("userId", "fullName email");
+  return transaction ? normalizeWithdrawal(transaction) : null;
+};
+
 // Helper: Generate unique payout ID
 const generatePayoutId = () => {
   return `PAYOUT-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -18,15 +56,27 @@ export const getAllPayouts = async (req, res) => {
 
     const skip = (page - 1) * limit;
 
-    const [payouts, total] = await Promise.all([
+    const transactionFilter = {
+      ...withdrawalFilter,
+      ...(status ? { status: payoutStatusToTransactionStatus(status) } : {})
+    };
+
+    const [savedPayouts, withdrawals] = await Promise.all([
       Payout.find(filter)
         .sort({ [sortBy]: -1 })
-        .skip(skip)
-        .limit(parseInt(limit))
         .populate("approvedBy", "email")
         .populate("processedBy", "email"),
-      Payout.countDocuments(filter)
+      Transaction.find(transactionFilter)
+        .sort({ [sortBy]: -1 })
+        .populate("userId", "fullName email")
     ]);
+
+    const combined = [
+      ...savedPayouts.map(p => p.toObject()),
+      ...withdrawals.map(normalizeWithdrawal)
+    ].sort((a, b) => new Date(b[sortBy] || b.createdAt) - new Date(a[sortBy] || a.createdAt));
+    const total = combined.length;
+    const payouts = combined.slice(skip, skip + parseInt(limit));
 
     res.json({
       success: true,
@@ -85,19 +135,34 @@ export const getPayoutStats = async (req, res) => {
           totalPayouts: { $sum: 1 },
           totalAmount: { $sum: "$amount" },
           totalTax: { $sum: "$taxAmount" },
-          totalNet: { $sum: "$netAmount" }
+          totalNet: { $sum: { $cond: [{ $eq: ["$status", "COMPLETED"] }, "$netAmount", 0] } }
         }
       }
     ]);
 
+    const withdrawalStats = await Transaction.aggregate([
+      { $match: withdrawalFilter },
+      { $group: { _id: "$status", count: { $sum: 1 }, totalAmount: { $sum: { $ifNull: ["$amount", 0] } }, totalNet: { $sum: { $cond: [{ $eq: ["$status", "completed"] }, { $ifNull: ["$metadata.netAmount", "$amount"] }, 0] } }, totalTax: { $sum: { $ifNull: ["$metadata.feeAmount", 0] } } } }
+    ]);
+    const withdrawalOverall = withdrawalStats.reduce((acc, row) => ({
+      totalPayouts: acc.totalPayouts + row.count,
+      totalAmount: acc.totalAmount + row.totalAmount,
+      totalNet: acc.totalNet + row.totalNet,
+      totalTax: acc.totalTax + row.totalTax
+    }), { totalPayouts: 0, totalAmount: 0, totalTax: 0, totalNet: 0 });
+    const savedOverall = total[0] || { totalPayouts: 0, totalAmount: 0, totalTax: 0, totalNet: 0 };
+
     res.json({
       success: true,
-      byStatus: stats,
-      overall: total[0] || {
-        totalPayouts: 0,
-        totalAmount: 0,
-        totalTax: 0,
-        totalNet: 0
+      byStatus: [
+        ...stats,
+        ...withdrawalStats.map(s => ({ _id: transactionStatusToPayoutStatus(s._id), count: s.count, totalAmount: s.totalAmount }))
+      ],
+      overall: {
+        totalPayouts: savedOverall.totalPayouts + withdrawalOverall.totalPayouts,
+        totalAmount: savedOverall.totalAmount + withdrawalOverall.totalAmount,
+        totalTax: savedOverall.totalTax + withdrawalOverall.totalTax,
+        totalNet: savedOverall.totalNet + withdrawalOverall.totalNet
       }
     });
   } catch (err) {
@@ -203,6 +268,9 @@ export const approvePayout = async (req, res) => {
     const { notes } = req.body;
     const adminId = req.adminId; // From token
 
+    const withdrawal = await updateWithdrawal(req.params.id, "APPROVED");
+    if (withdrawal) return res.json({ success: true, message: "Payout approved", data: withdrawal });
+
     const payout = await Payout.findByIdAndUpdate(
       req.params.id,
       {
@@ -234,6 +302,9 @@ export const processPayout = async (req, res) => {
   try {
     const { transactionReference } = req.body;
     const adminId = req.adminId;
+
+    const withdrawal = await updateWithdrawal(req.params.id, "COMPLETED", { "metadata.transactionReference": transactionReference });
+    if (withdrawal) return res.json({ success: true, message: "Payout processed successfully", data: withdrawal });
 
     const payout = await Payout.findById(req.params.id);
     if (!payout) {
@@ -272,6 +343,9 @@ export const processPayout = async (req, res) => {
 export const rejectPayout = async (req, res) => {
   try {
     const { failureReason } = req.body;
+
+    const withdrawal = await updateWithdrawal(req.params.id, "CANCELLED", { "metadata.failureReason": failureReason });
+    if (withdrawal) return res.json({ success: true, message: "Payout cancelled", data: withdrawal });
 
     const payout = await Payout.findByIdAndUpdate(
       req.params.id,
