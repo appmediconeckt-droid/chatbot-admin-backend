@@ -6,7 +6,7 @@ const counselorEarningSchema = new mongoose.Schema(
     userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     sessionId: mongoose.Schema.Types.ObjectId,
     transactionId: mongoose.Schema.Types.ObjectId,
-    callId: mongoose.Schema.Types.ObjectId,
+    callId: String,
     chatId: mongoose.Schema.Types.ObjectId,
     sessionType: String,
     totalAmount: { type: Number, default: 0 },
@@ -14,7 +14,8 @@ const counselorEarningSchema = new mongoose.Schema(
     earningAmount: { type: Number, default: 0 },
     earningStatus: { type: String, default: "completed", index: true },
     payoutStatus: { type: String, default: "pending", index: true },
-    paidAt: Date
+    paidAt: Date,
+    metadata: { type: mongoose.Schema.Types.Mixed, default: {} }
   },
   { timestamps: true, collection: "counselorearnings" }
 );

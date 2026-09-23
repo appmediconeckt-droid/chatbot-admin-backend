@@ -24,6 +24,27 @@ const supportTicketSchema = new mongoose.Schema({
   lastMessageAt: { type: Date, default: Date.now, index: true },
   resolvedAt: { type: Date, default: null },
   assignedTo: { type: String, default: "" }
+  ,
+  callDispute: {
+    callId: { type: String, default: "" },
+    transactionId: { type: mongoose.Schema.Types.ObjectId, ref: "Transaction", default: null },
+    chargedAmount: { type: Number, default: 0 },
+    correctAmount: { type: Number, default: 0 },
+    refundedAmount: { type: Number, default: 0 },
+    counselorReversal: { type: Number, default: 0 },
+    platformReversal: { type: Number, default: 0 },
+    actualDurationSeconds: { type: Number, default: 0 },
+    status: {
+      type: String,
+      enum: ["", "INVESTIGATED", "NO_EXCESS", "REFUNDED"],
+      default: ""
+    },
+    adjustmentId: { type: String, default: "" },
+    investigatedAt: { type: Date, default: null },
+    refundedAt: { type: Date, default: null },
+    resolvedBy: { type: String, default: "" },
+    reason: { type: String, default: "" }
+  }
 }, { timestamps: true });
 
 supportTicketSchema.index({ status: 1, lastMessageAt: -1 });

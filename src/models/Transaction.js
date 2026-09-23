@@ -3,6 +3,9 @@ import mongoose from "mongoose";
 const transactionSchema = new mongoose.Schema(
   {
     transactionId: { type: String, unique: true, sparse: true },
+    razorpayOrderId: { type: String, index: true },
+    razorpayPaymentId: { type: String, index: true },
+    razorpaySignature: { type: String },
     userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     counselorId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     sessionId: { type: String },
@@ -15,7 +18,7 @@ const transactionSchema = new mongoose.Schema(
     counselorEarnings: { type: Number, default: 0 }, // Amount earned by counselor
     description: { type: String },
     relatedTransactionId: { type: mongoose.Schema.Types.ObjectId, ref: "Transaction" },
-    metadata: { type: Object, default: {} }
+    metadata: { type: mongoose.Schema.Types.Mixed, default: {} }
   },
   { timestamps: true }
 );

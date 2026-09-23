@@ -1,9 +1,15 @@
 import Payout from "../models/Payout.js";
 import Transaction from "../models/Transaction.js";
 import User from "../models/User.js";
+import Notification from "../models/Notification.js";
 
-const transactionStatusToPayoutStatus = (status) =>
-  ({ pending: "PENDING", hold: "APPROVED", completed: "COMPLETED", failed: "FAILED", refunded: "CANCELLED" })[String(status || "pending").toLowerCase()] || String(status).toUpperCase();
+const transactionStatusToPayoutStatus = (status, metadata = {}) => {
+  const payoutStatus = String(metadata.payoutStatus || "").toLowerCase();
+  if (payoutStatus === "paid") return "COMPLETED";
+  if (payoutStatus === "approved" || payoutStatus === "processing") return "APPROVED";
+  if (payoutStatus === "rejected") return "CANCELLED";
+  return ({ pending: "PENDING", hold: "APPROVED", completed: "COMPLETED", failed: "FAILED", refunded: "CANCELLED" })[String(status || "pending").toLowerCase()] || String(status).toUpperCase();
+};
 
 const payoutStatusToTransactionStatus = (status) =>
   ({ APPROVED: "hold", COMPLETED: "completed", CANCELLED: "failed" })[status] || status.toLowerCase();
@@ -20,10 +26,14 @@ const normalizeWithdrawal = (transaction) => ({
   taxAmount: Number(transaction.metadata?.feeAmount || 0),
   netAmount: Number(transaction.metadata?.netAmount ?? transaction.amount ?? 0),
   currency: transaction.currency || "INR",
-  status: transactionStatusToPayoutStatus(transaction.status),
+  status: transactionStatusToPayoutStatus(transaction.status, transaction.metadata),
   paymentMethod: "BANK_TRANSFER",
   payoutType: transaction.metadata?.payoutType || "standard",
   transactionReference: transaction.metadata?.transactionReference || "",
+  approvedAt: transaction.metadata?.approvedAt || null,
+  processedAt: transaction.metadata?.processedAt || null,
+  completedAt: transaction.metadata?.paidAt || null,
+  failureReason: transaction.metadata?.failureReason || "",
   source: "WITHDRAWAL_TRANSACTION",
   createdAt: transaction.createdAt,
   updatedAt: transaction.updatedAt
@@ -38,6 +48,28 @@ const updateWithdrawal = async (syntheticId, status, extra = {}) => {
     { new: true }
   ).populate("userId", "fullName email");
   return transaction ? normalizeWithdrawal(transaction) : null;
+};
+
+const createCounselorNotification = async ({ recipientId, title, message, transaction, status }) => {
+  if (!recipientId) return;
+  try {
+    await Notification.create({
+      recipientId,
+      type: "payment",
+      title,
+      message,
+      data: {
+        withdrawalId: transaction._id,
+        amount: transaction.amount,
+        netAmount: transaction.metadata?.netAmount ?? transaction.amount,
+        payoutStatus: status,
+        transactionReference: transaction.metadata?.transactionReference || ""
+      },
+      actionUrl: "/counselor/earnings"
+    });
+  } catch (error) {
+    console.error("Payout notification failed:", error.message);
+  }
 };
 
 // Helper: Generate unique payout ID
@@ -268,8 +300,33 @@ export const approvePayout = async (req, res) => {
     const { notes } = req.body;
     const adminId = req.adminId; // From token
 
-    const withdrawal = await updateWithdrawal(req.params.id, "APPROVED");
-    if (withdrawal) return res.json({ success: true, message: "Payout approved", data: withdrawal });
+    if (String(req.params.id).startsWith("withdrawal-")) {
+      const id = String(req.params.id).slice(11);
+      const approvedAt = new Date();
+      const transaction = await Transaction.findOneAndUpdate(
+        { _id: id, ...withdrawalFilter, status: "pending" },
+        {
+          $set: {
+            status: "hold",
+            "metadata.payoutStatus": "approved",
+            "metadata.approvalStatus": "approved",
+            "metadata.approvedAt": approvedAt,
+            "metadata.approvedBy": adminId,
+            "metadata.approvalNotes": notes || ""
+          }
+        },
+        { new: true }
+      ).populate("userId", "fullName email");
+      if (!transaction) return res.status(409).json({ success: false, error: "Only pending withdrawals can be approved" });
+      await createCounselorNotification({
+        recipientId: transaction.userId?._id || transaction.userId,
+        title: "Withdrawal approved",
+        message: `Your withdrawal of ₹${Number(transaction.metadata?.netAmount ?? transaction.amount).toFixed(2)} was approved and is awaiting bank transfer.`,
+        transaction,
+        status: "approved"
+      });
+      return res.json({ success: true, message: "Payout approved; bank transfer is still pending", data: normalizeWithdrawal(transaction) });
+    }
 
     const payout = await Payout.findByIdAndUpdate(
       req.params.id,
@@ -303,8 +360,37 @@ export const processPayout = async (req, res) => {
     const { transactionReference } = req.body;
     const adminId = req.adminId;
 
-    const withdrawal = await updateWithdrawal(req.params.id, "COMPLETED", { "metadata.transactionReference": transactionReference });
-    if (withdrawal) return res.json({ success: true, message: "Payout processed successfully", data: withdrawal });
+    if (!String(transactionReference || "").trim()) {
+      return res.status(400).json({ success: false, error: "Bank transaction reference/UTR is required" });
+    }
+
+    if (String(req.params.id).startsWith("withdrawal-")) {
+      const id = String(req.params.id).slice(11);
+      const paidAt = new Date();
+      const transaction = await Transaction.findOneAndUpdate(
+        { _id: id, ...withdrawalFilter, status: "hold" },
+        {
+          $set: {
+            status: "completed",
+            "metadata.payoutStatus": "paid",
+            "metadata.transactionReference": String(transactionReference).trim(),
+            "metadata.processedAt": paidAt,
+            "metadata.paidAt": paidAt,
+            "metadata.processedBy": adminId
+          }
+        },
+        { new: true }
+      ).populate("userId", "fullName email");
+      if (!transaction) return res.status(409).json({ success: false, error: "Only approved withdrawals can be marked paid" });
+      await createCounselorNotification({
+        recipientId: transaction.userId?._id || transaction.userId,
+        title: "Withdrawal paid",
+        message: `₹${Number(transaction.metadata?.netAmount ?? transaction.amount).toFixed(2)} was sent to your bank account. UTR: ${transaction.metadata.transactionReference}`,
+        transaction,
+        status: "paid"
+      });
+      return res.json({ success: true, message: "Bank transfer confirmed and payout marked paid", data: normalizeWithdrawal(transaction) });
+    }
 
     const payout = await Payout.findById(req.params.id);
     if (!payout) {
@@ -344,8 +430,36 @@ export const rejectPayout = async (req, res) => {
   try {
     const { failureReason } = req.body;
 
-    const withdrawal = await updateWithdrawal(req.params.id, "CANCELLED", { "metadata.failureReason": failureReason });
-    if (withdrawal) return res.json({ success: true, message: "Payout cancelled", data: withdrawal });
+    if (String(req.params.id).startsWith("withdrawal-")) {
+      if (!String(failureReason || "").trim()) {
+        return res.status(400).json({ success: false, error: "Rejection reason is required" });
+      }
+      const id = String(req.params.id).slice(11);
+      const rejectedAt = new Date();
+      const transaction = await Transaction.findOneAndUpdate(
+        { _id: id, ...withdrawalFilter, status: { $in: ["pending", "hold"] } },
+        {
+          $set: {
+            status: "failed",
+            "metadata.payoutStatus": "rejected",
+            "metadata.failureReason": String(failureReason).trim(),
+            "metadata.rejectedAt": rejectedAt,
+            "metadata.refundedAt": rejectedAt
+          }
+        },
+        { new: true }
+      ).populate("userId", "fullName email");
+      if (!transaction) return res.status(409).json({ success: false, error: "Only pending or approved withdrawals can be rejected" });
+      await User.findByIdAndUpdate(transaction.userId?._id || transaction.userId, { $inc: { walletBalance: transaction.amount } });
+      await createCounselorNotification({
+        recipientId: transaction.userId?._id || transaction.userId,
+        title: "Withdrawal rejected",
+        message: `Your withdrawal was rejected and ₹${Number(transaction.amount).toFixed(2)} was returned to your wallet. Reason: ${transaction.metadata.failureReason}`,
+        transaction,
+        status: "rejected"
+      });
+      return res.json({ success: true, message: "Payout rejected and amount returned to counselor wallet", data: normalizeWithdrawal(transaction) });
+    }
 
     const payout = await Payout.findByIdAndUpdate(
       req.params.id,

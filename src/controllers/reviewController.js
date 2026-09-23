@@ -17,15 +17,31 @@ export const getAllReviews = async (req, res) => {
 
     const filter = {};
 
-    if (rating && !Number.isNaN(Number(rating))) filter.rating = Number(rating);
-    if (status) filter.status = status;
+    if (rating && !Number.isNaN(Number(rating))) {
+      const numericRating = Number(rating);
+      filter.$or = [{ stars: numericRating }, { rating: numericRating }];
+    }
+    if (status) {
+      if (status === "approved") {
+        filter.status = { $in: ["approved", null] };
+      } else {
+        filter.status = status;
+      }
+    }
     if (search) {
-      filter.$or = [
+      const searchFilter = [
         { review: new RegExp(search, "i") },
         { comment: new RegExp(search, "i") },
         { feedback: new RegExp(search, "i") },
+        { reviewText: new RegExp(search, "i") },
         { message: new RegExp(search, "i") },
       ];
+      if (filter.$or) {
+        filter.$and = [{ $or: filter.$or }, { $or: searchFilter }];
+        delete filter.$or;
+      } else {
+        filter.$or = searchFilter;
+      }
     }
 
     const [reviews, total, average] = await Promise.all([
@@ -41,13 +57,20 @@ export const getAllReviews = async (req, res) => {
       Review.countDocuments(filter),
       Review.aggregate([
         { $match: filter },
-        { $group: { _id: null, avgRating: { $avg: "$rating" } } },
+        {
+          $group: {
+            _id: null,
+            avgRating: { $avg: { $ifNull: ["$stars", "$rating"] } },
+          },
+        },
       ]),
     ]);
 
     const data = reviews.map((item) => ({
       ...item,
       text: getReviewText(item),
+      rating: item.stars ?? item.rating ?? 0,
+      status: item.status || "approved",
       user: item.userId || item.user,
       counselor: item.counselorId || item.counselor,
     }));

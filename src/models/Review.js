@@ -6,7 +6,10 @@ const reviewSchema = new mongoose.Schema(
     counselorId: { type: mongoose.Schema.Types.ObjectId, ref: "User", index: true },
     user: { type: mongoose.Schema.Types.ObjectId, ref: "User", index: true },
     counselor: { type: mongoose.Schema.Types.ObjectId, ref: "User", index: true },
-    rating: { type: Number, min: 1, max: 5, default: 5 },
+    // The customer application stores these documents through its Rating
+    // model, whose persisted field is `stars`.
+    stars: { type: Number, min: 1, max: 5, required: true },
+    rating: { type: Number, min: 1, max: 5 },
     review: { type: String, default: "" },
     comment: { type: String, default: "" },
     status: {
@@ -16,7 +19,7 @@ const reviewSchema = new mongoose.Schema(
       index: true,
     },
   },
-  { timestamps: true, collection: "reviews", strict: false }
+  { timestamps: true, collection: "ratings", strict: false }
 );
 
 const Review = mongoose.model("Review", reviewSchema);
