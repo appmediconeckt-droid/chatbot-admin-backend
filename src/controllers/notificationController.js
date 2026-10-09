@@ -259,6 +259,8 @@ export const sendPromotionNotification = async (req, res) => {
           audience: data.audience,
           mainBackendStatus: result.status,
           error: result.error,
+          code: result.code,
+          mainBackendResponse: result.body,
         },
       });
     }

@@ -1,9 +1,4 @@
-import dotenv from "dotenv";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.join(__dirname, "../.env") });
+import { mongoUri } from "./config/env.js";
 
 import mongoose from "mongoose";
 import app from "./app.js";
@@ -14,7 +9,7 @@ const PORT = process.env.PORT || 5002;
 import dns from "node:dns";
 dns.setServers(["8.8.8.8", "1.1.1.1"]);
 mongoose
-  .connect(process.env.MONGO_URI)
+  .connect(mongoUri)
   .then(() => {
     console.log("\n✅ MongoDB Connected Successfully!");
 
