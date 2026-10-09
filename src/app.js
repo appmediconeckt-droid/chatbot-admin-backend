@@ -11,6 +11,7 @@ import revenueRoutes from "./routes/revenueRoutes.js";
 import payoutRoutes from "./routes/payoutRoutes.js";
 import locationRoutes from "./routes/locationRoutes.js";
 import settingsRoutes from "./routes/settingsRoutes.js";
+import notificationRoutes from "./routes/notificationRoutes.js";
 import reviewRoutes from "./routes/reviewRoutes.js";
 import paymentRoutes from "./routes/paymentRoutes.js";
 import supportRoutes from "./routes/supportRoutes.js";
@@ -18,6 +19,14 @@ import refundRoutes from "./routes/refundRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
 
 const app = express();
+
+// Set to the number of trusted reverse proxies in front of this service.
+// Direct/local deployments default to trusting no proxies.
+const trustProxyHops = Number(process.env.TRUST_PROXY_HOPS || 0);
+if (!Number.isSafeInteger(trustProxyHops) || trustProxyHops < 0) {
+  throw new Error("TRUST_PROXY_HOPS must be a non-negative integer");
+}
+app.set("trust proxy", trustProxyHops);
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -69,6 +78,7 @@ app.use("/api/admin/revenue", revenueRoutes);
 app.use("/api/admin/payouts", payoutRoutes);
 app.use("/api/admin/location", locationRoutes);
 app.use("/api/admin/settings", settingsRoutes);
+app.use("/api/admin/notifications", notificationRoutes);
 app.use("/api/admin/reviews", reviewRoutes);
 app.use("/api/admin/payments", paymentRoutes);
 app.use("/api/admin/support", supportRoutes);
