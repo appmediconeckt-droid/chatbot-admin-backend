@@ -1,3 +1,4 @@
+import { PROFESSIONAL_ROLES } from "../utils/roles.js";
 import mongoose from "mongoose";
 
 const locationCurrentSchema = new mongoose.Schema(
@@ -49,7 +50,7 @@ const userSchema = new mongoose.Schema(
     password: { type: String },
     isVerified: { type: Boolean, default: false, index: true },
     isActive: { type: Boolean, default: true, index: true },
-    role: { type: String, enum: ["user", "counsellor"], default: "user", index: true },
+    role: { type: String, enum: ["user", ...PROFESSIONAL_ROLES], default: "user", index: true },
 
     locationConsent: { type: Boolean, default: false },
     locationData: { type: locationDataSchema, default: () => ({}) },
@@ -64,6 +65,7 @@ const userSchema = new mongoose.Schema(
     bio: { type: String },
     availability: { type: String },
     walletBalance: { type: Number, default: 0 },
+    activeWalletRefundRequest: { type: Boolean, default: false },
     walletCreditPaymentIds: { type: [String], default: [], select: false },
     walletAdjustmentIds: { type: [String], default: [], select: false },
 

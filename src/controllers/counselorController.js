@@ -1,3 +1,4 @@
+import { PROFESSIONAL_ROLES, isProfessionalRole } from "../utils/roles.js";
 import User from "../models/User.js";
 import AuditLog from "../models/AuditLog.js";
 
@@ -6,7 +7,7 @@ export const getAllCounselors = async (req, res) => {
     const { page = 1, limit = 10, search, specialization, status } = req.query;
     const skip = (page - 1) * limit;
 
-    let filter = { role: "counsellor" };
+    let filter = { role: { $in: PROFESSIONAL_ROLES } };
 
     if (search) {
       filter.$or = [
@@ -47,7 +48,7 @@ export const getAllCounselors = async (req, res) => {
 export const getCounselorById = async (req, res) => {
   try {
     const counselor = await User.findById(req.params.id);
-    if (!counselor || counselor.role !== "counsellor") {
+    if (!counselor || !isProfessionalRole(counselor.role)) {
       return res.status(404).json({ success: false, message: "Counselor not found" });
     }
     res.json({ success: true, data: counselor });
@@ -114,19 +115,19 @@ export const rejectCounselors = async (req, res) => {
 
 export const getCounselorStats = async (req, res) => {
   try {
-    const total = await User.countDocuments({ role: "counsellor" });
-    const verified = await User.countDocuments({ role: "counsellor", isVerified: true });
-    const active = await User.countDocuments({ role: "counsellor", isActive: true });
+    const total = await User.countDocuments({ role: { $in: PROFESSIONAL_ROLES } });
+    const verified = await User.countDocuments({ role: { $in: PROFESSIONAL_ROLES }, isVerified: true });
+    const active = await User.countDocuments({ role: { $in: PROFESSIONAL_ROLES }, isActive: true });
     const newThisMonth = await User.countDocuments({
-      role: "counsellor",
+      role: { $in: PROFESSIONAL_ROLES },
       createdAt: { $gte: new Date(new Date().setDate(1)) }
     });
     const noSpecialization = await User.countDocuments({
-      role: "counsellor",
+      role: { $in: PROFESSIONAL_ROLES },
       $or: [{ specialization: null }, { specialization: "" }]
     });
 
-    const topRated = await User.find({ role: "counsellor" })
+    const topRated = await User.find({ role: { $in: PROFESSIONAL_ROLES } })
       .sort({ rating: -1 })
       .limit(5);
 
@@ -142,7 +143,7 @@ export const getCounselorStats = async (req, res) => {
 export const getCounselorsWithoutSpecialization = async (req, res) => {
   try {
     const counselors = await User.find({
-      role: "counsellor",
+      role: { $in: PROFESSIONAL_ROLES },
       $or: [{ specialization: null }, { specialization: "" }]
     }).select("fullName email specialization experience isVerified isActive");
 
@@ -165,7 +166,7 @@ export const updateChatPermission = async (req, res) => {
       return res.status(400).json({ success: false, message: "enabled (boolean) is required" });
     }
 
-    const existing = await User.findOne({ _id: id, role: "counsellor" }).lean();
+    const existing = await User.findOne({ _id: id, role: { $in: PROFESSIONAL_ROLES } }).lean();
     if (!existing) {
       return res.status(404).json({ success: false, message: "Counselor not found" });
     }
@@ -214,7 +215,7 @@ export const updateChatPermission = async (req, res) => {
 
 export const getChatPermission = async (req, res) => {
   try {
-    const counselor = await User.findOne({ _id: req.params.id, role: "counsellor" })
+    const counselor = await User.findOne({ _id: req.params.id, role: { $in: PROFESSIONAL_ROLES } })
       .select("fullName email chatPermission")
       .lean();
     if (!counselor) {

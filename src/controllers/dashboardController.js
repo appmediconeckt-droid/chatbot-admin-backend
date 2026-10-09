@@ -1,3 +1,4 @@
+import { PROFESSIONAL_ROLES } from "../utils/roles.js";
 import User from "../models/User.js";
 import AuditLog from "../models/AuditLog.js";
 import Transaction from "../models/Transaction.js";
@@ -8,11 +9,11 @@ import SupportTicket from "../models/SupportTicket.js";
 export const getDashboardAnalytics = async (req, res) => {
   try {
     const totalUsers = await User.countDocuments({ role: "user" });
-    const totalCounselors = await User.countDocuments({ role: "counsellor" });
+    const totalCounselors = await User.countDocuments({ role: { $in: PROFESSIONAL_ROLES } });
     const verifiedUsers = await User.countDocuments({ role: "user", isVerified: true });
-    const verifiedCounselors = await User.countDocuments({ role: "counsellor", isVerified: true });
+    const verifiedCounselors = await User.countDocuments({ role: { $in: PROFESSIONAL_ROLES }, isVerified: true });
     const activeUsers = await User.countDocuments({ role: "user", isActive: true });
-    const activeCounselors = await User.countDocuments({ role: "counsellor", isActive: true });
+    const activeCounselors = await User.countDocuments({ role: { $in: PROFESSIONAL_ROLES }, isActive: true });
 
     res.json({
       success: true,
@@ -51,7 +52,7 @@ export const getUserGrowthData = async (req, res) => {
       });
 
       const counselorCount = await User.countDocuments({
-        role: "counsellor",
+        role: { $in: PROFESSIONAL_ROLES },
         createdAt: { $gte: date, $lt: nextDate }
       });
 
@@ -90,7 +91,7 @@ export const getRecentActivities = async (req, res) => {
       .limit(5)
       .select("fullName email createdAt");
 
-    const recentCounselors = await User.find({ role: "counsellor" })
+    const recentCounselors = await User.find({ role: { $in: PROFESSIONAL_ROLES } })
       .sort({ createdAt: -1 })
       .limit(5)
       .select("fullName email createdAt");
@@ -233,11 +234,11 @@ export const getNotifications = async (req, res) => {
       failedLogs,
       failedLogCount
     ] = await Promise.all([
-      User.find({ role: "counsellor", isVerified: false })
+      User.find({ role: { $in: PROFESSIONAL_ROLES }, isVerified: false })
         .sort({ createdAt: -1 })
         .limit(5)
         .select("fullName email createdAt"),
-      User.countDocuments({ role: "counsellor", isVerified: false }),
+      User.countDocuments({ role: { $in: PROFESSIONAL_ROLES }, isVerified: false }),
 
       Payout.find({ status: "PENDING" })
         .sort({ createdAt: -1 })

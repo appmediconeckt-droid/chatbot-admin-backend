@@ -1,8 +1,12 @@
 import jwt from "jsonwebtoken";
 import bcryptjs from "bcryptjs";
 
+export const getAdminRole = (email) =>
+  typeof email === "string" && email.trim().toLowerCase() === process.env.ADMIN_EMAIL?.trim().toLowerCase()
+    ? "superadmin" : "admin";
+
 export const generateAdminToken = (email) => {
-  return jwt.sign({ email }, process.env.ADMIN_JWT_SECRET, {
+  return jwt.sign({ email, role: getAdminRole(email) }, process.env.ADMIN_JWT_SECRET, {
     expiresIn: "24h"
   });
 };
@@ -19,7 +23,7 @@ export const verifyAdminToken = (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.ADMIN_JWT_SECRET);
-    req.user = { email: decoded.email, id: decoded.id || null };
+    req.user = { email: decoded.email, id: decoded.id || null, role: getAdminRole(decoded.email) };
     next();
   } catch (err) {
     return res.status(401).json({
@@ -27,6 +31,13 @@ export const verifyAdminToken = (req, res, next) => {
       message: "Invalid or expired token"
     });
   }
+};
+
+export const requireSuperadmin = (req, res, next) => {
+  if (req.user?.role !== "superadmin") {
+    return res.status(403).json({ success: false, message: "Only the Superadmin can create admins" });
+  }
+  next();
 };
 
 export const verifyAdminPassword = async (password) => {
